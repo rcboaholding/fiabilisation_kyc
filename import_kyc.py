@@ -309,36 +309,36 @@ _FAST_EXECUTEMANY_LOGGED = False
 
 
 def enable_fast_executemany(cursor):
-    """Active fast_executemany sur le curseur pyodbc sous-jacent.
+    """Active fast_executemany sur le VRAI curseur pyodbc.
 
-    Django enveloppe le curseur (CursorWrapper -> curseur mssql-django ->
-    curseur pyodbc) : l'attribut ne se trouve pas forcement au premier niveau.
-    Sans ce reglage, pyodbc envoie UNE requete reseau PAR LIGNE — c'est la
-    difference entre ~300 et ~10 000 lignes/s sur un lien distant.
+    Les wrappers Django puis mssql-django *lisent* fast_executemany depuis
+    pyodbc via __getattr__ (donc hasattr renvoie True) mais ne proxifient pas
+    __setattr__ et ne repropagent pas le flag : le poser sur un wrapper est
+    inerte et pyodbc reste a 1 aller-retour reseau par ligne. Il faut
+    descendre jusqu'au curseur pyodbc lui-meme (.cursor.cursor).
     """
     global _FAST_EXECUTEMANY_LOGGED
     if not is_mssql_database():
         return False
 
-    candidat = cursor
-    for _ in range(5):
-        if candidat is None:
-            break
-        if hasattr(candidat, "fast_executemany"):
-            candidat.fast_executemany = True
-            if not _FAST_EXECUTEMANY_LOGGED:
-                logger.info("fast_executemany ACTIF (%s).", type(candidat).__name__)
-                _FAST_EXECUTEMANY_LOGGED = True
-            return True
-        candidat = getattr(candidat, "cursor", None)
+    inner = cursor
+    while getattr(inner, "cursor", None) is not None:
+        inner = inner.cursor
+
+    try:
+        inner.fast_executemany = True
+    except AttributeError:
+        if not _FAST_EXECUTEMANY_LOGGED:
+            logger.warning(
+                "fast_executemany INTROUVABLE (%s) : insertions ligne par ligne.",
+                type(inner).__name__)
+            _FAST_EXECUTEMANY_LOGGED = True
+        return False
 
     if not _FAST_EXECUTEMANY_LOGGED:
-        logger.warning(
-            "fast_executemany INTROUVABLE sur le curseur : les insertions "
-            "partiront ligne par ligne (import tres lent). Verifier la version "
-            "de pyodbc / mssql-django.")
+        logger.info("fast_executemany ACTIF sur le curseur pyodbc (%s).", type(inner).__name__)
         _FAST_EXECUTEMANY_LOGGED = True
-    return False
+    return True
 
 
 def direct_insert_batch(model, columns, rows_with_lines, filename):
@@ -427,7 +427,49 @@ def delete_filiale_rows(model, filiale_value):
     return run_with_deadlock_retry(_delete, f"DELETE {model._meta.db_table} ({filiale_value})")
 
 
-                        
+# Desactivation des index secondaires pendant le chargement : SQL Server
+# maintient chaque index a chaque INSERT. On les eteint le temps du bulk load
+# puis on les reconstruit en une passe. L'index de scope (1re colonne FILIALE)
+# reste actif pour que le DELETE par filiale ne parte pas en scan complet.
+TOGGLE_INDEXES = os.environ.get("KYC_TOGGLE_INDEXES", "1") == "1"
+_INDEX_TABLES = tuple(sorted({Kyc_pp._meta.db_table, Kyc_pm._meta.db_table}))
+_SECONDARY_INDEX_SQL = """
+    SELECT t.name, i.name
+    FROM sys.indexes i
+    JOIN sys.tables t ON t.object_id = i.object_id
+    WHERE t.name IN (%s, %s)
+      AND i.type_desc = 'NONCLUSTERED'
+      AND i.is_primary_key = 0
+      AND i.is_unique_constraint = 0
+      AND i.name IS NOT NULL
+      AND NOT EXISTS (
+          SELECT 1 FROM sys.index_columns ic
+          JOIN sys.columns c ON c.object_id = ic.object_id AND c.column_id = ic.column_id
+          WHERE ic.object_id = i.object_id AND ic.index_id = i.index_id
+            AND ic.key_ordinal = 1 AND c.name = 'FILIALE'
+      )
+"""
+
+
+def toggle_secondary_indexes(disable):
+    """DISABLE (avant import) ou REBUILD (apres) les index secondaires MSSQL."""
+    if not TOGGLE_INDEXES or not is_mssql_database():
+        return
+    action = "DISABLE" if disable else "REBUILD"
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(_SECONDARY_INDEX_SQL, list(_INDEX_TABLES))
+            targets = cursor.fetchall()
+            for table, index in targets:
+                cursor.execute(
+                    f"ALTER INDEX {quoted_name(index)} ON {quoted_name(table)} {action}"
+                )
+        logger.info("Index secondaires : %s sur %d index.", action, len(targets))
+    except Exception as exc:
+        logger.warning("Bascule des index (%s) impossible : %s", action, exc)
+
+
+
 def importer_csv_optimise(path, model, mapping, code_filiale):
     inserted = 0
     read_rows = 0
@@ -577,25 +619,29 @@ if __name__ == "__main__":
                                                                            
                                                                          
                                                                              
-    if os.environ.get("KYC_PARALLEL", "0") == "1" and len(FILIALES) > 1:
-        # Threads, pas processus : le goulot est reseau/MSSQL (pas CPU), et
-        # ProcessPoolExecutor plante sous tache planifiee Windows sans stdio
-        # valide ("OSError: [WinError 6] The handle is invalid" au spawn).
-        # Chaque thread obtient sa propre connexion Django thread-locale.
-        workers = min(len(FILIALES), int(os.environ.get("KYC_MAX_WORKERS", "6")))
-        with ThreadPoolExecutor(max_workers=workers) as executor:
-            futures = {executor.submit(traiter_filiale, code): code for code in FILIALES}
-            for future in as_completed(futures):
-                code = futures[future]
+    toggle_secondary_indexes(disable=True)
+    try:
+        if os.environ.get("KYC_PARALLEL", "0") == "1" and len(FILIALES) > 1:
+            # Threads, pas processus : le goulot est reseau/MSSQL (pas CPU), et
+            # ProcessPoolExecutor plante sous tache planifiee Windows sans stdio
+            # valide ("OSError: [WinError 6] The handle is invalid" au spawn).
+            # Chaque thread obtient sa propre connexion Django thread-locale.
+            workers = min(len(FILIALES), int(os.environ.get("KYC_MAX_WORKERS", "6")))
+            with ThreadPoolExecutor(max_workers=workers) as executor:
+                futures = {executor.submit(traiter_filiale, code): code for code in FILIALES}
+                for future in as_completed(futures):
+                    code = futures[future]
+                    try:
+                        future.result()
+                    except Exception as exc:
+                        logger.error(f"Erreur filiale {code}: {exc}")
+        else:
+            for code in FILIALES:
                 try:
-                    future.result()
+                    traiter_filiale(code)
                 except Exception as exc:
                     logger.error(f"Erreur filiale {code}: {exc}")
-    else:
-        for code in FILIALES:
-            try:
-                traiter_filiale(code)
-            except Exception as exc:
-                logger.error(f"Erreur filiale {code}: {exc}")
+    finally:
+        toggle_secondary_indexes(disable=False)
 
     logger.info("\nProcessus termine.")

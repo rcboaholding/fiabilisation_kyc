@@ -916,7 +916,7 @@ class TauxEvolution(models.Model):
     agence   = models.CharField(blank=True,max_length=50,null=True)
     expl     = models.CharField(blank=True,max_length=50)
     date     = models.DateField(blank=True)
-    taux     = models.FloatField(blank=True)
+    taux     = models.FloatField(blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
     flux_stock = models.CharField(blank=True,max_length=50)
     pp_pm = models.CharField(blank=True,max_length=50)

@@ -83,10 +83,16 @@ def parse_date_multi(val):
     return None
 
 def parse_taux(val):
+    # 'N/A', vide ou non numerique => None (pas 0) pour faire un saut sur la courbe
+    if val is None:
+        return None
+    s = str(val).strip()
+    if s == "" or s.lower() in ("n/a", "na", "nan", "null", "none", "-"):
+        return None
     try:
-        return float(str(val).replace("%", "").replace(",", "."))
-    except:
-        return 0.0
+        return float(s.replace("%", "").replace(",", "."))
+    except ValueError:
+        return None
 
 def detect_encoding(path):
     try:

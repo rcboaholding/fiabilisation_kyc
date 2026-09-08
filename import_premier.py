@@ -107,12 +107,16 @@ def parse_date_multi(val):
     return None
 
 def parse_taux(val):
-    if not val or str(val).strip() == "":
-        return 0.0
+    # 'N/A', vide ou non numerique => None (pas 0) pour faire un saut sur la courbe
+    if val is None:
+        return None
+    s = str(val).strip()
+    if s == "" or s.lower() in ("n/a", "na", "nan", "null", "none", "-"):
+        return None
     try:
-        return float(str(val).replace("%", "").replace(",", ".").strip())
+        return float(s.replace("%", "").replace(",", ".").strip())
     except ValueError:
-        return 0.0
+        return None
 
 def bulk_create_fallback(rows: list[Model], model: Model):
     inserted = 0
@@ -227,10 +231,10 @@ def import_taux_filiales():
                         if not date_obj or date_obj in dates_vues:
                             continue
 
-                        val_flux_pm = row.get(flux_pm_key, 0) if flux_pm_key else 0
-                        val_flux_pp = row.get(flux_pp_key, 0) if flux_pp_key else 0
-                        val_stock_pm = row.get(stock_pm_key, 0) if stock_pm_key else 0
-                        val_stock_pp = row.get(stock_pp_key, 0) if stock_pp_key else 0
+                        val_flux_pm = row.get(flux_pm_key) if flux_pm_key else None
+                        val_flux_pp = row.get(flux_pp_key) if flux_pp_key else None
+                        val_stock_pm = row.get(stock_pm_key) if stock_pm_key else None
+                        val_stock_pp = row.get(stock_pp_key) if stock_pp_key else None
 
                         taux = TauxEvolution_filiale(
                             filiale=nom_filiale_complet,

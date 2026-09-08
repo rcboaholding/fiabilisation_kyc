@@ -25,15 +25,15 @@ class Command(BaseCommand):
 
             for row in reader:
                                           
-                email = row.get('email')
-                username = row.get('username') or email                                                       
-                first_name = row.get('first_name')
-                last_name = row.get('last_name')
-                agence = row.get('code_agence')
-                code_expl = row.get('code_expl')
-                organe = row.get('organe')
-                filiale = row.get('filiale')
-                téléphone = row.get('téléphone')
+                email = (row.get('email') or '').strip()
+                username = (row.get('username') or email).strip()
+                first_name = (row.get('first_name') or '').strip()
+                last_name = (row.get('last_name') or '').strip()
+                agence = (row.get('code_agence') or row.get('agence') or '').strip()
+                code_expl = (row.get('code_expl') or '').strip()
+                organe = (row.get('organe') or '').strip()
+                filiale = (row.get('filiale') or '').strip()
+                téléphone = (row.get('téléphone') or '').strip()
                 password1 = row.get('password1')
 
                                         

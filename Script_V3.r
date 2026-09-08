@@ -1230,7 +1230,10 @@ read_csv2_big <- function(path, cache = TRUE, drop = NULL) {
   t0 <- Sys.time()
   # Le cache depend des colonnes ignorees : suffixe distinct pour ne pas
   # recharger un cache complet quand on demande une lecture allegee (ou l'inverse).
-  rds <- paste0(path, if (length(drop)) "-drop" else "", ".rds")
+  # Suffixe ".v2q" : les exports filiales entourent desormais les champs texte
+  # de guillemets. On change la cle de cache pour ne PAS recharger un ancien
+  # .rds construit sur la version non quotee (ADRESSE tronquee sur les ";").
+  rds <- paste0(path, if (length(drop)) "-drop" else "", ".v2q.rds")
   if (cache && file.exists(rds) && file.mtime(rds) >= file.mtime(path)) {
     message("[read_csv2_big] Lecture depuis le cache: ", basename(rds))
     df <- readRDS(rds)
@@ -1345,8 +1348,8 @@ read_csv2_big <- function(path, cache = TRUE, drop = NULL) {
   drop_idx <- NULL
   entete_all <- NULL
   if (length(drop)) {
-    entete_all <- fread_try("", nrows = 0L)
-    if (is.null(entete_all) || ncol(entete_all) < 2) entete_all <- fread_try("\"", nrows = 0L)
+    entete_all <- fread_try("\"", nrows = 0L)
+    if (is.null(entete_all) || ncol(entete_all) < 2) entete_all <- fread_try("", nrows = 0L)
     if (!is.null(entete_all)) {
       noms_reels <- trimws(gsub('"', "", names(entete_all), fixed = TRUE))
       drop_idx <- which(toupper(noms_reels) %in% toupper(drop))
@@ -1366,12 +1369,13 @@ read_csv2_big <- function(path, cache = TRUE, drop = NULL) {
 
   if (taille_go <= SEUIL_DECOUPAGE_GO) {
     # ---- Lecture en une seule passe (fichiers "normaux") ----
-    # quote="" en premier : les exports bancaires ont des guillemets mal apparies
-    # qui font derailler le parsing quote (fichier lu en 1 seule colonne)
-    df <- fread_try("", dropcols = drop_idx)
+    # quote="\"" en premier : les exports filiales entourent desormais les
+    # champs texte de guillemets, ce qui protege les ";" internes (ADRESSE).
+    # Repli quote="" si les guillemets sont mal apparies (fichier lu en 1 colonne).
+    df <- fread_try("\"", dropcols = drop_idx)
     if (is.null(df) || ncol(df) < 2) {
-      message("[read_csv2_big] Nouvel essai avec quote standard ...")
-      df <- fread_try("\"", dropcols = drop_idx)
+      message("[read_csv2_big] Nouvel essai sans gestion des guillemets ...")
+      df <- fread_try("", dropcols = drop_idx)
       if (!is.null(df) && ncol(df) < 2) df <- NULL
     }
     if (is.null(df)) {
@@ -1395,16 +1399,17 @@ read_csv2_big <- function(path, cache = TRUE, drop = NULL) {
 
     # En-tete APRES drop : col_names doit decrire les colonnes reellement lues,
     # puisque les tranches sortent en V1, V2, ... et sont renommees dessus.
-    entete <- fread_try("", nrows = 0L, dropcols = drop_idx)
+    entete <- fread_try("\"", nrows = 0L, dropcols = drop_idx)
+    quote_ok <- "\""
     if (is.null(entete) || ncol(entete) < 2) {
-      entete <- fread_try("\"", nrows = 0L, dropcols = drop_idx)
+      entete <- fread_try("", nrows = 0L, dropcols = drop_idx)
+      quote_ok <- ""
     }
     if (is.null(entete) || ncol(entete) < 2) {
       message("[read_csv2_big] ATTENTION: en-tete illisible, bascule sur read_csv2_auto")
       return(read_csv2_auto(path))
     }
     col_names <- names(entete)
-    quote_ok <- ""
 
     # Taille de tranche ESTIMEE a partir de la longueur moyenne des 1000
     # premieres lignes. Volontairement pas de comptage exact prealable : un

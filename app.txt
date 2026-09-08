@@ -42,30 +42,23 @@ echo  Demarrage : %date% %time%
 echo  ────────────────────────────────────────────────────────────────
 echo.
 
-REM ── Etape 0 : arret CIBLE du serveur Django ────────────────────────
-title COMPLIANCE BOA GROUP - [0/8] Arret de Django...
-echo  [START] Etape 0 : Fermeture du serveur Django...
+REM ── Etape 0 : redemarrage CIBLE du serveur Django (via PID file, script dedie) ──
+title COMPLIANCE BOA GROUP - [0/8] Redemarrage de Django...
+echo  [START] Etape 0 : Redemarrage du serveur Django (waitress)...
 
-REM 0.a - fenetres console Django lancees par ce script
-taskkill /F /FI "WINDOWTITLE eq Django - Fiabilisation KYC*" /T >nul 2>&1
-
-REM 0.b - tout processus qui ecoute encore sur le port Django
+REM Securite : au cas ou d'anciens process runserver/waitress trainent encore
+REM (avant migration vers le suivi par PID file), on les nettoie en plus.
 for /f "tokens=5" %%P in ('netstat -ano ^| findstr /R /C:":%DJANGO_PORT% .*LISTENING"') do (
     echo         - arret du PID %%P (port %DJANGO_PORT%)
     taskkill /F /PID %%P /T >nul 2>&1
 )
 
-REM 0.c - processus python residuels issus du venv Django uniquement
-for /f "skip=1 tokens=2 delims=," %%P in ('wmic process where "name='python.exe'" get processid^,commandline /format:csv 2^>nul ^| findstr /I "manage.py runserver"') do (
-    taskkill /F /PID %%P /T >nul 2>&1
+powershell -NoProfile -ExecutionPolicy Bypass -File "%DJANGO_DIR%\scripts\restart_django.ps1" -BindAddress "%DJANGO_HOST%"
+if errorlevel 1 (
+    echo  [ECHEC] Le redemarrage de Django a echoue - voir logs\django.log.err
+) else (
+    echo  [OK] Serveur Django lance sur %DJANGO_HOST%
 )
-
-timeout /t 2 /nobreak >nul
-echo  [OK] Django est ferme.
-echo.
-echo  [START] Lancement du serveur Django...
-start "Django - Fiabilisation KYC" /D "%DJANGO_DIR%" cmd /k venv\Scripts\python.exe manage.py runserver %DJANGO_HOST%
-echo  [OK] Serveur Django lance sur %DJANGO_HOST%
 echo.
 echo  ────────────────────────────────────────────────────────────────
 echo  [START] Etape 1 : Production des etats R (script_V3.R)

@@ -309,8 +309,8 @@
             {% for d, pm, pp, period_label in history_rows %}
             <tr class="border-t border-slate-100 hover:bg-slate-50">
               <td class="px-4 py-3 font-bold text-slate-700">{{ period_label }}</td>
-              <td class="px-4 py-3 text-right font-black text-slate-700">{{ pm|default:0 }}%</td>
-              <td class="px-4 py-3 text-right font-black text-blue-700">{{ pp|default:0 }}%</td>
+              <td class="px-4 py-3 text-right font-black text-slate-700">{% if pm == None %}N/A{% else %}{{ pm }}%{% endif %}</td>
+              <td class="px-4 py-3 text-right font-black text-blue-700">{% if pp == None %}N/A{% else %}{{ pp }}%{% endif %}</td>
             </tr>
             {% endfor %}
           </tbody>
@@ -399,8 +399,9 @@ document.addEventListener('DOMContentLoaded', function() {
           data: data,
           borderColor: baseColor,
           backgroundColor: baseColor + '22',
+          spanGaps: true,
           segment: {
-            borderColor: (c) => rateColor(c.p1.parsed.y)
+            borderColor: (c) => rateColor(c.p1.skip ? c.p0.parsed.y : c.p1.parsed.y)
           },
           fill: true,
           tension: 0.35,

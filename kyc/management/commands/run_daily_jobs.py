@@ -198,7 +198,10 @@ class Command(BaseCommand):
         child_env = {**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"}
 
         def _run_sliced(command, extra_args=()):
-            workers = min(parallel_workers, max(1, (os.cpu_count() or 4) - 2))
+            # Jobs lies a MSSQL (agregats sur 1,1 M lignes, aller-retours reseau),
+            # pas au CPU : on ne plafonne pas sur os.cpu_count(). Sur la machine de
+            # prod (4 vCPU) l'ancien "cpu_count() - 2" bloquait a 2 slices.
+            workers = max(1, int(os.environ.get("KYC_SLICE_WORKERS", str(parallel_workers))))
 
             def _spawn(slice_str=None):
                 argv = [_sys.executable, "manage.py", command, *extra_args]

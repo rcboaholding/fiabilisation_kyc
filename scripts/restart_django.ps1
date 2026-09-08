@@ -1,5 +1,5 @@
 ﻿<#
-  Redemarre proprement le serveur Django (aucune fenetre cmd creee).
+  Redemarre proprement le serveur Django (aucune fenetre cmd creee), via waitress (WSGI prod).
   - arrete uniquement le processus enregistre dans django.pid (pas tous les python.exe)
   - relance en processus detache, fenetre masquee, sortie redirigee vers logs\django.log
 #>
@@ -37,8 +37,9 @@ if ((Test-Path $LogFile) -and ((Get-Item $LogFile).Length -gt 20MB)) {
 }
 
 # --- 3. Relance detachee, sans fenetre ---------------------------------------
+$Host_, $Port_ = $BindAddress -split ':'
 $proc = Start-Process -FilePath $Python `
-    -ArgumentList @("-X", "utf8", "manage.py", "runserver", $BindAddress, "--noreload") `
+    -ArgumentList @("-m", "waitress", "--host=$Host_", "--port=$Port_", "Fiabilisation_kyc.wsgi:application") `
     -WorkingDirectory $ProjectRoot `
     -WindowStyle Hidden `
     -RedirectStandardOutput $LogFile `

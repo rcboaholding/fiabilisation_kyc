@@ -6153,16 +6153,23 @@ def clients_scorer(request):
     if col_risque: dq = _f(dq, RISQUE__icontains=col_risque)
 
                                                                    
-    scorer_scored_count = scorer_unscored_count = overdue_unscored_count = 0
-    for q in dq:
-        a = q.aggregate(
-            scored=Count(Case(When(~Q(RISQUE="") & ~Q(RISQUE__isnull=True), then=1), output_field=IntegerField())),
-            unscored=Count(Case(When(Q(RISQUE="") | Q(RISQUE__isnull=True), then=1), output_field=IntegerField())),
-            overdue_unscored=Count(Case(When((Q(RISQUE="") | Q(RISQUE__isnull=True)) & ~Q(DATEREV="") & Q(DATEREV__lt=today_str), then=1), output_field=IntegerField())),
-        )
-        scorer_scored_count += a['scored'] or 0
-        scorer_unscored_count += a['unscored'] or 0
-        overdue_unscored_count += a['overdue_unscored'] or 0
+    scorer_counts_key = "scorer_counts_kyc:" + hashlib.md5(
+        ("||".join(str(q.query) for q in dq) + f"|{today_str}").encode("utf-8")).hexdigest()
+    cached_counts = cache.get(scorer_counts_key)
+    if cached_counts is not None:
+        scorer_scored_count, scorer_unscored_count, overdue_unscored_count = cached_counts
+    else:
+        scorer_scored_count = scorer_unscored_count = overdue_unscored_count = 0
+        for q in dq:
+            a = q.aggregate(
+                scored=Count(Case(When(~Q(RISQUE="") & ~Q(RISQUE__isnull=True), then=1), output_field=IntegerField())),
+                unscored=Count(Case(When(Q(RISQUE="") | Q(RISQUE__isnull=True), then=1), output_field=IntegerField())),
+                overdue_unscored=Count(Case(When((Q(RISQUE="") | Q(RISQUE__isnull=True)) & ~Q(DATEREV="") & Q(DATEREV__lt=today_str), then=1), output_field=IntegerField())),
+            )
+            scorer_scored_count += a['scored'] or 0
+            scorer_unscored_count += a['unscored'] or 0
+            overdue_unscored_count += a['overdue_unscored'] or 0
+        cache.set(scorer_counts_key, (scorer_scored_count, scorer_unscored_count, overdue_unscored_count), 300)
 
     total_scorer = scorer_scored_count + scorer_unscored_count
     scoring_rate = (scorer_scored_count / total_scorer * 100) if total_scorer > 0 else 0.0
@@ -7699,11 +7706,18 @@ def statistiques(request):
         return f"{key[1]:02d}/{key[0]}"
 
     def aggregate_by_period(queryset):
+        # Valeurs 'N/A' / non numeriques ignorees => saut sur la courbe (pas de 0)
         grouped = {}
         for obj in queryset:
+            if obj.taux is None:
+                continue
+            try:
+                val = float(obj.taux)
+            except (TypeError, ValueError):
+                continue
             key = build_period_key(obj.date)
             bucket = grouped.setdefault(key, {"sum": 0.0, "count": 0})
-            bucket["sum"] += float(obj.taux or 0)
+            bucket["sum"] += val
             bucket["count"] += 1
         return {k: round(v["sum"] / v["count"], 2) for k, v in grouped.items() if v["count"] > 0}
 
@@ -7713,11 +7727,19 @@ def statistiques(request):
     period_keys = sorted(set(dict_expl_pp.keys()) | set(dict_expl_pm.keys()))
     labels_chart = [format_period_label(k) for k in period_keys]
     labels_table = labels_chart[:]
-    data_expl_pp = [float(dict_expl_pp.get(k, 0)) for k in period_keys]
-    data_expl_pm = [float(dict_expl_pm.get(k, 0)) for k in period_keys]
+    data_expl_pp = [dict_expl_pp.get(k) for k in period_keys]
+    data_expl_pm = [dict_expl_pm.get(k) for k in period_keys]
 
-    var_pp = round(data_expl_pp[-1] - data_expl_pp[-2], 2) if len(data_expl_pp) > 1 else 0
-    var_pm = round(data_expl_pm[-1] - data_expl_pm[-2], 2) if len(data_expl_pm) > 1 else 0
+    def _delta_last(series):
+        vals = [v for v in series if v is not None]
+        return round(vals[-1] - vals[-2], 2) if len(vals) > 1 else 0
+
+    def _last_value(series):
+        vals = [v for v in series if v is not None]
+        return vals[-1] if vals else 0
+
+    var_pp = _delta_last(data_expl_pp)
+    var_pm = _delta_last(data_expl_pm)
 
                                         
     expl_queryset = TauxEvolution.objects.filter(filiale=target_filiale, flux_stock=code_flux_stock)
@@ -7821,8 +7843,8 @@ def statistiques(request):
         'labels_json': json.dumps(labels_chart),
         'data_expl_pp': json.dumps(data_expl_pp),
         'data_expl_pm': json.dumps(data_expl_pm),
-        'last_pp_expl': data_expl_pp[-1] if data_expl_pp else 0,
-        'last_pm_expl': data_expl_pm[-1] if data_expl_pm else 0,
+        'last_pp_expl': _last_value(data_expl_pp),
+        'last_pm_expl': _last_value(data_expl_pm),
         'last_pp_fil': last_pp_fil,
         'last_pm_fil': last_pm_fil,
         'var_pp': var_pp,
@@ -8938,28 +8960,46 @@ def taux_evolution_view(request):
             return str(key)
         return f"{key[1]:02d}/{key[0]}"
 
+    def _num(v):
+        # Valeurs absentes ou 'N/A' : ignorees pour faire un saut sur la courbe
+        if v is None:
+            return None
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return None
+
     grouped = {}
     for d, pm, pp in rows:
         key = build_period_key(d)
         bucket = grouped.setdefault(
             key,
-            {"sum_pm": 0.0, "sum_pp": 0.0, "count": 0, "latest_date": d},
+            {"sum_pm": 0.0, "cnt_pm": 0, "sum_pp": 0.0, "cnt_pp": 0, "latest_date": d},
         )
-        bucket["sum_pm"] += float(pm or 0)
-        bucket["sum_pp"] += float(pp or 0)
-        bucket["count"] += 1
+        vpm = _num(pm)
+        if vpm is not None:
+            bucket["sum_pm"] += vpm
+            bucket["cnt_pm"] += 1
+        vpp = _num(pp)
+        if vpp is not None:
+            bucket["sum_pp"] += vpp
+            bucket["cnt_pp"] += 1
         if d > bucket["latest_date"]:
             bucket["latest_date"] = d
 
+    def _avg(bucket, sum_key, cnt_key):
+        cnt = bucket[cnt_key]
+        return round(bucket[sum_key] / cnt, 2) if cnt else None
+
     period_keys = sorted(grouped.keys())
     labels = [format_period_label(k) for k in period_keys]
-    data_pm = [round(grouped[k]["sum_pm"] / grouped[k]["count"], 2) for k in period_keys]
-    data_pp = [round(grouped[k]["sum_pp"] / grouped[k]["count"], 2) for k in period_keys]
+    data_pm = [_avg(grouped[k], "sum_pm", "cnt_pm") for k in period_keys]
+    data_pp = [_avg(grouped[k], "sum_pp", "cnt_pp") for k in period_keys]
     history_rows = [
         (
             grouped[k]["latest_date"],
-            round(grouped[k]["sum_pm"] / grouped[k]["count"], 2),
-            round(grouped[k]["sum_pp"] / grouped[k]["count"], 2),
+            data_pm[idx],
+            data_pp[idx],
             labels[idx],
         )
         for idx, k in enumerate(period_keys)
@@ -8968,17 +9008,17 @@ def taux_evolution_view(request):
     kpi_pm = {'last': 0, 'diff': 0, 'status': 'up'}
     kpi_pp = {'last': 0, 'diff': 0, 'status': 'up'}
 
-    if len(data_pm) >= 1:
-        kpi_pm['last'] = round(data_pm[-1], 2)
-        if len(data_pm) >= 2:
-            kpi_pm['diff'] = round(data_pm[-1] - data_pm[-2], 2)
-            kpi_pm['status'] = 'up' if kpi_pm['diff'] >= 0 else 'down'
+    def _fill_kpi(kpi, series):
+        vals = [v for v in series if v is not None]
+        if not vals:
+            return
+        kpi['last'] = round(vals[-1], 2)
+        if len(vals) >= 2:
+            kpi['diff'] = round(vals[-1] - vals[-2], 2)
+            kpi['status'] = 'up' if kpi['diff'] >= 0 else 'down'
 
-    if len(data_pp) >= 1:
-        kpi_pp['last'] = round(data_pp[-1], 2)
-        if len(data_pp) >= 2:
-            kpi_pp['diff'] = round(data_pp[-1] - data_pp[-2], 2)
-            kpi_pp['status'] = 'up' if kpi_pp['diff'] >= 0 else 'down'
+    _fill_kpi(kpi_pm, data_pm)
+    _fill_kpi(kpi_pp, data_pp)
 
     quality_scope = evaluate_data_quality_scope(user)
                                                                                
@@ -9109,28 +9149,46 @@ def taux_evolution_view_stock(request):
             return str(key)
         return f"{key[1]:02d}/{key[0]}"
 
+    def _num(v):
+        # Valeurs absentes ou 'N/A' : ignorees pour faire un saut sur la courbe
+        if v is None:
+            return None
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return None
+
     grouped = {}
     for d, pm, pp in rows:
         key = build_period_key(d)
         bucket = grouped.setdefault(
             key,
-            {"sum_pm": 0.0, "sum_pp": 0.0, "count": 0, "latest_date": d},
+            {"sum_pm": 0.0, "cnt_pm": 0, "sum_pp": 0.0, "cnt_pp": 0, "latest_date": d},
         )
-        bucket["sum_pm"] += float(pm or 0)
-        bucket["sum_pp"] += float(pp or 0)
-        bucket["count"] += 1
+        vpm = _num(pm)
+        if vpm is not None:
+            bucket["sum_pm"] += vpm
+            bucket["cnt_pm"] += 1
+        vpp = _num(pp)
+        if vpp is not None:
+            bucket["sum_pp"] += vpp
+            bucket["cnt_pp"] += 1
         if d > bucket["latest_date"]:
             bucket["latest_date"] = d
 
+    def _avg(bucket, sum_key, cnt_key):
+        cnt = bucket[cnt_key]
+        return round(bucket[sum_key] / cnt, 2) if cnt else None
+
     period_keys = sorted(grouped.keys())
     labels = [format_period_label(k) for k in period_keys]
-    data_pm = [round(grouped[k]["sum_pm"] / grouped[k]["count"], 2) for k in period_keys]
-    data_pp = [round(grouped[k]["sum_pp"] / grouped[k]["count"], 2) for k in period_keys]
+    data_pm = [_avg(grouped[k], "sum_pm", "cnt_pm") for k in period_keys]
+    data_pp = [_avg(grouped[k], "sum_pp", "cnt_pp") for k in period_keys]
     history_rows = [
         (
             grouped[k]["latest_date"],
-            round(grouped[k]["sum_pm"] / grouped[k]["count"], 2),
-            round(grouped[k]["sum_pp"] / grouped[k]["count"], 2),
+            data_pm[idx],
+            data_pp[idx],
             labels[idx],
         )
         for idx, k in enumerate(period_keys)
@@ -9139,17 +9197,17 @@ def taux_evolution_view_stock(request):
     kpi_pm = {'last': 0, 'diff': 0, 'status': 'up'}
     kpi_pp = {'last': 0, 'diff': 0, 'status': 'up'}
 
-    if len(data_pm) >= 1:
-        kpi_pm['last'] = round(data_pm[-1], 2)
-        if len(data_pm) >= 2:
-            kpi_pm['diff'] = round(data_pm[-1] - data_pm[-2], 2)
-            kpi_pm['status'] = 'up' if kpi_pm['diff'] >= 0 else 'down'
+    def _fill_kpi(kpi, series):
+        vals = [v for v in series if v is not None]
+        if not vals:
+            return
+        kpi['last'] = round(vals[-1], 2)
+        if len(vals) >= 2:
+            kpi['diff'] = round(vals[-1] - vals[-2], 2)
+            kpi['status'] = 'up' if kpi['diff'] >= 0 else 'down'
 
-    if len(data_pp) >= 1:
-        kpi_pp['last'] = round(data_pp[-1], 2)
-        if len(data_pp) >= 2:
-            kpi_pp['diff'] = round(data_pp[-1] - data_pp[-2], 2)
-            kpi_pp['status'] = 'up' if kpi_pp['diff'] >= 0 else 'down'
+    _fill_kpi(kpi_pm, data_pm)
+    _fill_kpi(kpi_pp, data_pp)
 
     quality_scope = evaluate_data_quality_scope(user)
                                                                                
@@ -10221,12 +10279,14 @@ def pilotage_kyc(request):
 
     seen_agents = set()
     latest_notes = []
+    latest_notations = []
     for n in notations_list:
         agent_id = getattr(n.agent, 'pk', None)
         if agent_id in seen_agents:
             continue
         seen_agents.add(agent_id)
         latest_notes.append(n.note)
+        latest_notations.append(n)
 
     total_agents = len(latest_notes)
     excellence_count = sum(1 for note in latest_notes if note in ('Très Bien', 'Bien'))
@@ -10294,19 +10354,8 @@ def pilotage_kyc(request):
     chart_qual_pm_values = [r['rate'] for r in qual_rows_pm_sorted]
     chart_qual_pm_colors = [get_rate_color(r['rate'], threshold) for r in qual_rows_pm_sorted]
 
-    chart_notation_overall_labels = ['Très Bien', 'Bien', 'Passable', 'Insuffisant']
-    chart_notation_overall_values = [
-        notations.filter(note='Très Bien').count(),
-        notations.filter(note='Bien').count(),
-        notations.filter(note='Passable').count(),
-        notations.filter(note='Insuffisant').count()
-    ]
-    chart_notation_overall_colors = ['#10b981', '#3b82f6', '#f59e0b', '#ef4444']
-
-    chart_notation_filiales = sorted(list(set(notations.values_list('agent__filiale', flat=True).distinct())))
-    chart_notation_filiales = [f for f in chart_notation_filiales if f]
-    
-    chart_notation_by_filiale_datasets = []
+    # Graphiques basés sur l'évaluation actuelle (la plus récente) de chaque agent,
+    # pas sur l'historique complet des notations.
     notes_order = ['Très Bien', 'Bien', 'Passable', 'Insuffisant']
     colors_map = {
         'Très Bien': '#10b981',
@@ -10314,10 +10363,25 @@ def pilotage_kyc(request):
         'Passable': '#f59e0b',
         'Insuffisant': '#ef4444'
     }
+
+    chart_notation_overall_labels = notes_order
+    chart_notation_overall_values = [
+        sum(1 for note in latest_notes if note == lbl) for lbl in notes_order
+    ]
+    chart_notation_overall_colors = ['#10b981', '#3b82f6', '#f59e0b', '#ef4444']
+
+    chart_notation_filiales = sorted({
+        (n.agent.filiale or '') for n in latest_notations if (n.agent.filiale or '')
+    })
+
+    chart_notation_by_filiale_datasets = []
     for note in notes_order:
         data = []
         for fil in chart_notation_filiales:
-            count = notations.filter(agent__filiale=fil, note=note).count()
+            count = sum(
+                1 for n in latest_notations
+                if (n.agent.filiale or '') == fil and n.note == note
+            )
             data.append(count)
         chart_notation_by_filiale_datasets.append({
             'label': note,
