@@ -111,8 +111,8 @@ class TermTranslationAdmin(admin.ModelAdmin):
 
 @admin.register(AppreciationConfig)
 class AppreciationConfigAdmin(admin.ModelAdmin):
-    list_display = ('filiale', 'date_demarrage', 'trimestre_actuel', 'active', 'updated_at')
-    list_editable = ('date_demarrage', 'active')
+    list_display = ('filiale', 'date_demarrage', 'trimestre_actuel', 'methode_taux', 'active', 'updated_at')
+    list_editable = ('date_demarrage', 'methode_taux', 'active')
     search_fields = ('filiale',)
     list_filter = ('active',)
     ordering = ('filiale',)
@@ -125,9 +125,9 @@ class AppreciationConfigAdmin(admin.ModelAdmin):
 
 @admin.register(Appreciation_globale)
 class AppreciationGlobaleAdmin(admin.ModelAdmin):
-    list_display = ('filiale', 'expl', 'trimestre', 'taux_evolution', 'taux_qualite',
+    list_display = ('filiale', 'expl', 'trimestre', 'methode_taux', 'taux_evolution', 'taux_qualite',
                     'notation', 'appreciation_qualite', 'appreciation_globale', 'computed_at')
-    list_filter = ('filiale', 'trimestre', 'appreciation_globale', 'appreciation_qualite')
+    list_filter = ('filiale', 'trimestre', 'methode_taux', 'appreciation_globale', 'appreciation_qualite')
     search_fields = ('filiale', 'expl')
     readonly_fields = ('computed_at',)
     actions = ['recalculer']

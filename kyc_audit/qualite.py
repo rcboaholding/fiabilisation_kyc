@@ -128,15 +128,17 @@ def evaluer(t, regles, filiale, typologie, exemples=0):
     retenues = selectionner(regles, filiale, typologie)
     n = len(t)
     detail, total_ok, total_eval = [], 0, 0
+    touches = set()  # index des clients portant au moins une anomalie
 
     for regle in retenues:
         conds = regle["conditions"]
         absents = sorted({c["field_name"] for c in conds
                           if t.col(c["field_name"]) is None})
         anomalies, echantillon = 0, []
-        for r in t.rows:
+        for i, r in enumerate(t.rows):
             if combiner(conds, lambda f: t.get(r, f), _TODAY[0]):
                 anomalies += 1
+                touches.add(i)
                 if len(echantillon) < exemples:
                     echantillon.append({
                         "client": t.get(r, "CLIENT"),
@@ -166,6 +168,8 @@ def evaluer(t, regles, filiale, typologie, exemples=0):
         "nb_regles": len(detail),
         "nb_regles_evaluables": sum(1 for d in detail if d["evaluable"]),
         "total_anomalies": sum(d["anomalies"] for d in detail),
+        "clients_anomalie": len(touches),
+        "part_clients_anomalie": round(len(touches) / n * 100, 1) if n else 0.0,
         "regles": detail,
     }
 

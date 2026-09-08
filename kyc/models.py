@@ -1133,6 +1133,15 @@ class AppreciationConfig(models.Model):
     date_demarrage = models.DateField(
         verbose_name="Date de démarrage de la campagne",
         help_text="Le trimestre courant = nombre de trimestres écoulés depuis cette date + 1 (plafonné à 4).")
+    METHODE_CHOICES = [
+        ("flux", "Flux (nouveaux clients / évolution récente)"),
+        ("stock", "Stock (toute la base)"),
+    ]
+    methode_taux = models.CharField(
+        max_length=5, choices=METHODE_CHOICES, default="flux",
+        verbose_name="Méthode de calcul des taux",
+        help_text="Détermine si l'appréciation globale s'appuie sur les taux « flux » ou "
+                  "« stock » : taux d'évolution, taux de qualité agent et notation retenue.")
     active = models.BooleanField(default=True, verbose_name="Active")
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -1157,8 +1166,10 @@ class Appreciation_globale(models.Model):
     expl = models.CharField(max_length=50, blank=True)
 
     trimestre = models.IntegerField(default=1)
+    methode_taux = models.CharField(max_length=5, blank=True, default="flux",
+                                    verbose_name="Méthode retenue (flux / stock)")
     taux_evolution = models.FloatField(null=True, blank=True,
-                                       verbose_name="Taux d'évolution (flux, moy. PP+PM)")
+                                       verbose_name="Taux d'évolution (moy. PP+PM)")
     taux_qualite = models.FloatField(null=True, blank=True,
                                      verbose_name="Taux de qualité agent")
     notation = models.CharField(max_length=20, blank=True,

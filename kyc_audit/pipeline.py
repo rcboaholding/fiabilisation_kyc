@@ -127,13 +127,15 @@ def _champs_vides(t, candidats):
     return out
 
 
-def executer(iso2, dossier=".", regles_path=None, today=None):
+def executer(iso2, dossier=".", regles_path=None, today=None,
+             pp_path=None, pm_path=None):
     fil = filiale_info(iso2)
     today = today or aujourd_hui()
     qualite.fixer_date_reference(today)
 
     f_pp, f_pm = fichiers_entree(fil["iso2"])
-    p_pp, p_pm = os.path.join(dossier, f_pp), os.path.join(dossier, f_pm)
+    p_pp = pp_path or os.path.join(dossier, f_pp)
+    p_pm = pm_path or os.path.join(dossier, f_pm)
     for p in (p_pp, p_pm):
         if not os.path.exists(p):
             raise FileNotFoundError(
@@ -155,6 +157,8 @@ def executer(iso2, dossier=".", regles_path=None, today=None):
         "source": {"pp": diag_pp, "pm": diag_pm},
         "referentiel": {
             "regles_totales": len(regles),
+            "regles_pp": len(qualite.selectionner(regles, nom_regles, "PP")),
+            "regles_pm": len(qualite.selectionner(regles, nom_regles, "PM")),
             "regles_filiale": len(qualite.selectionner(regles, nom_regles, "PP"))
                               + len(qualite.selectionner(regles, nom_regles, "PM")),
             "champs_pp": PP_FIELDS,

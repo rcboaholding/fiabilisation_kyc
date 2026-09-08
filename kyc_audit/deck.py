@@ -33,7 +33,8 @@ def _date_fr(d):
 def _couverture(prs, R, d):
     couverture(
         prs,
-        "AUDIT QUALITÉ ET COMPLÉTUDE DES DONNÉES KYC",
+        [("RAPPORT D'AUDIT", 22, True, None),
+         ("COMPLÉTUDE ET QUALITÉ DES DONNÉES KYC", 28, True, None)],
         f"{R['filiale']['libelle']} — {R['filiale']['pays']}",
         f"Stock au {_date_fr(d)}  |  {fr(R['source']['pp']['lignes'])} particuliers  |  "
         f"{fr(R['source']['pm']['lignes'])} entreprises",
@@ -57,7 +58,7 @@ def _perimetre(prs, R, d):
         (str(len(PP_FIELDS) + len(PM_FIELDS)), "Champs de complétude suivis",
          f"{len(PP_FIELDS)} champs PP · {len(PM_FIELDS)} champs PM", NAVY),
         (str(ref["regles_filiale"]), "Règles qualité applicables",
-         f"sur {ref['regles_totales']} règles du référentiel", NAVY),
+         f"{ref['regles_pp']} règles PP · {ref['regles_pm']} règles PM", NAVY),
     ]):
         kpi(s, 0.4 + i * 2.32, 1.22, 2.24, KPI_H, val, lib, nt, col, vsize=20)
 
@@ -100,17 +101,19 @@ def _synthese(prs, R):
     scpp, scpm = R["scoring"]["pp"], R["scoring"]["pm"]
 
     for i, (val, lib, nt, col) in enumerate([
-        (f"{cpp['taux_global']} %", "Complétude particuliers",
-         f"{cpp['appreciation']} · {cpp['part_clients_complets']} % de dossiers complets",
+        (f"{cpp['taux_global']} %", "Complétude particuliers (par champ)",
+         f"{len(PP_FIELDS)} champs · {cpp['part_clients_complets']} % de clients complets",
          couleur_taux(cpp["taux_global"])),
-        (f"{cpm['taux_global']} %", "Complétude entreprises",
-         f"{cpm['appreciation']} · {cpm['part_clients_complets']} % de dossiers complets",
+        (f"{cpm['taux_global']} %", "Complétude entreprises (par champ)",
+         f"{len(PM_FIELDS)} champs · {cpm['part_clients_complets']} % de clients complets",
          couleur_taux(cpm["taux_global"])),
         (f"{qpp['taux_qualite']} %", "Qualité particuliers",
-         f"{qpp['nb_regles']} règles · {fr(qpp['total_anomalies'])} anomalies",
+         f"{fr(qpp['clients_anomalie'])} clients en anomalie "
+         f"({qpp['part_clients_anomalie']} %)",
          couleur_taux(qpp["taux_qualite"], 85, 95)),
         (f"{qpm['taux_qualite']} %", "Qualité entreprises",
-         f"{qpm['nb_regles']} règles · {fr(qpm['total_anomalies'])} anomalies",
+         f"{fr(qpm['clients_anomalie'])} clients en anomalie "
+         f"({qpm['part_clients_anomalie']} %)",
          couleur_taux(qpm["taux_qualite"], 85, 95)),
     ]):
         kpi(s, 0.4 + i * 2.32, 1.22, 2.24, KPI_H, val, lib, nt, col, vsize=20)
@@ -134,15 +137,16 @@ def _synthese(prs, R):
             f"{label('CAPITAL','PM')} {cpm['par_champ']['CAPITAL']} % · "
             f"{label('CA','PM')} {cpm['par_champ']['CA']} % · "
             f"{label('RCSNO','PM')} {cpm['par_champ']['RCSNO']} %.",
-            f"Seuls {cpm['part_clients_complets']} % des dossiers entreprises sont complets.",
+            f"Seuls {cpm['part_clients_complets']} % des clients entreprises sont "
+            f"intégralement renseignés.",
         ]),
-        ("3", "La révision KYC n'est pas maîtrisée", RED, [
-            f"{scpp['part_sans_revision']} % des particuliers sont sans révision opposable "
-            f"({fr(scpp['sans_revision'])} clients).",
+        ("3", "La revue scoring présente des défaillances", RED, [
+            f"{scpp['part_sans_revision']} % des particuliers ont une date de revue scoring "
+            f"échue ou absente ({fr(scpp['sans_revision'])} clients).",
             f"{scpm['part_sans_revision']} % côté entreprises "
             f"({fr(scpm['sans_revision'])} sociétés).",
             f"{fr(scpp['risque_eleve']['sans_revision'])} clients à risque élevé sont concernés, "
-            f"soit {scpp['risque_eleve']['part']} % de ce niveau.",
+            f"soit {scpp['risque_eleve']['part']} % des clients de cette catégorie.",
         ]),
         ("4", "Les segments sensibles concentrent les écarts", AMBER, [
             f"Non-résidents : complétude {seg_pp['completude']['taux_global']} % et qualité "
@@ -165,8 +169,10 @@ def _synthese(prs, R):
         txt(s, x + 0.12, 2.94, 2.00, 1.88, [f"•  {l}" for l in lignes], size=7,
             color=BODY, spacing=4)
 
-    note(s, 4.98, "Complétude calculée selon Script_V3.r ; qualité selon le moteur de règles "
-                  "de la plateforme KYC restreint aux règles applicables à la filiale.")
+    note(s, 4.98, "Les taux de complétude affichés sont des taux par champ (cellules "
+                  "renseignées / cellules attendues) ; la part de clients complets compte les "
+                  "clients sans aucun champ vide. Qualité : moteur de règles de la plateforme "
+                  "KYC restreint aux règles applicables à la filiale.")
 
 
 def _completude(prs, R, typo):
@@ -179,10 +185,10 @@ def _completude(prs, R, typo):
     sous = sum(1 for v in c["par_champ"].values() if v is not None and v < 100)
     vides = sum(v for v in c["vides_par_champ"].values() if v)
     for i, (val, lib, nt, col) in enumerate([
-        (f"{c['taux_global']} %", "Taux de complétude global",
+        (f"{c['taux_global']} %", "Taux de complétude par champ",
          f"Appréciation : {c['appreciation']}", couleur_taux(c["taux_global"])),
-        (f"{c['part_clients_complets']} %", "Dossiers intégralement complets",
-         f"{fr(c['clients_complets'])} sur {fr(c['n'])}",
+        (f"{c['part_clients_complets']} %", "Clients intégralement renseignés",
+         f"{fr(c['clients_complets'])} sur {fr(c['n'])} clients à fiabiliser",
          couleur_taux(c["part_clients_complets"], 50, 90)),
         (f"{sous} / {len(champs)}", "Champs sous les 100 %",
          f"{fr(vides)} cellules vides au total", NAVY),
@@ -195,11 +201,12 @@ def _completude(prs, R, typo):
     vals = [v for _, v in ordre]
     txt(s, LEFT, 2.14, 5.4, 0.22, "Taux de complétude par champ (%)", size=9,
         bold=True, color=NAVY)
+    plancher = max(0, (min(vals) - 10) // 5 * 5) if vals else 0
     barres(s, LEFT, 2.36, 5.4, 2.92, cats, [("Complétude", vals)],
            couleurs=[[couleur_taux(v) for v in vals]], horizontal=True,
-           maxval=100, size=7, gap=40)
+           maxval=100, minval=plancher, size=7, gap=40)
 
-    rows = [["Champ incomplet", "Taux", "Cellules vides"]]
+    rows = [["Champ incomplet", "Taux de complétude", "Cellules vides"]]
     fills = {}
     for i, (f, v) in enumerate(ordre):
         if v < 100:
@@ -210,8 +217,8 @@ def _completude(prs, R, typo):
                 fills[(len(rows) - 1, 1)] = AMBER_PALE
     if len(rows) == 1:
         rows.append(["Aucun", "—", "—"])
-    txt(s, 6.0, 2.14, 3.6, 0.22, "Détail des champs incomplets", size=9,
-        bold=True, color=NAVY)
+    txt(s, 6.0, 2.14, 3.6, 0.22, "Champs ayant le taux de complétude le plus faible",
+        size=9, bold=True, color=NAVY)
     rows = rows[:9]
     ytab = 2.36
     table(s, 6.0, ytab, 3.6, rows, col_w=[52, 22, 26], font_size=7.5,
@@ -225,19 +232,21 @@ def _completude(prs, R, typo):
     if complets:
         lignes.append(f"Champs à 100 % : {', '.join(complets[:4])}"
                       f"{' …' if len(complets) > 4 else ''}.")
-    lignes.append(f"{c['part_clients_complets']} % des dossiers ne présentent aucun champ vide.")
+    lignes.append(f"{c['part_clients_complets']} % des clients à fiabiliser ne présentent "
+                  f"aucun champ vide ({fr(c['clients_complets'])} sur {fr(c['n'])}).")
     ybas = ytab + 0.26 + 0.245 * (len(rows) - 1) + 0.14
     encart(s, 6.0, ybas, 3.6, max(0.6, 5.28 - ybas), None, lignes,
            ton="amber" if c["taux_global"] and c["taux_global"] < 95 else "green", size=7)
 
 
 def _agences(prs, R):
-    s = page(prs, BANDEAU["II"], "Dispersion du taux de complétude par agence", PIED_DE_PAGE)
+    s = page(prs, BANDEAU["II"],
+             "Répartition du taux de complétude par champ, par agence", PIED_DE_PAGE)
     app, apm = R["completude"]["pp_agences"], R["completude"]["pm_agences"]
 
     def bloc_table(x, titre, agences, seuil):
         txt(s, x, 1.22, 4.5, 0.22, titre, size=9, bold=True, color=NAVY)
-        rows = [["Code", "Agence", "Clients", "Taux"]]
+        rows = [["Code", "Agence", "Clients", "Taux par champ"]]
         fills = {}
         for i, a in enumerate(agences[:9]):
             rows.append([a["agence"], a["libelle"][:26], fr(a["n"]), f"{a['taux']} %"])
@@ -245,8 +254,10 @@ def _agences(prs, R):
         table(s, x, 1.46, 4.5, rows, col_w=[12, 50, 18, 20], font_size=7.5,
               row_h=0.26, head_h=0.26, fills=fills)
 
-    bloc_table(LEFT, "Particuliers — 9 agences les plus en retrait", app, 95)
-    bloc_table(5.1, "Entreprises — 9 agences les plus en retrait", apm, 75)
+    bloc_table(LEFT, "Particuliers — 9 agences les plus en retrait (taux par champ)",
+               app, 95)
+    bloc_table(5.1, "Entreprises — 9 agences les plus en retrait (taux par champ)",
+               apm, 75)
 
     sub = [a for a in apm if a["n"] >= 100][:12]
     if sub:
@@ -325,10 +336,12 @@ def _dispositif(prs, R):
          f"{qpp['nb_regles']} règles appliquées", couleur_taux(qpp["taux_qualite"], 85, 95)),
         (f"{qpm['taux_qualite']} %", "Taux de qualité entreprises",
          f"{qpm['nb_regles']} règles appliquées", couleur_taux(qpm["taux_qualite"], 85, 95)),
-        (fr(qpp["total_anomalies"]), "Anomalies particuliers",
-         "toutes règles confondues", RED),
-        (fr(qpm["total_anomalies"]), "Anomalies entreprises",
-         "toutes règles confondues", RED),
+        (fr(qpp["clients_anomalie"]), "Particuliers en anomalie",
+         f"{qpp['part_clients_anomalie']} % du portefeuille · "
+         f"{fr(qpp['total_anomalies'])} anomalies", RED),
+        (fr(qpm["clients_anomalie"]), "Entreprises en anomalie",
+         f"{qpm['part_clients_anomalie']} % du portefeuille · "
+         f"{fr(qpm['total_anomalies'])} anomalies", RED),
     ]):
         kpi(s, 0.4 + i * 2.32, 1.22, 2.24, KPI_H, val, lib, nt, col, vsize=20)
 
@@ -348,7 +361,9 @@ def _dispositif(prs, R):
     table(s, LEFT, y, 9.2, rows, col_w=[42, 15, 14, 15, 14], font_size=7.5,
           row_h=0.27, head_h=0.28, fills=fills)
 
-    lignes = ["Le taux agrégé dilue les écarts : une règle défaillante sur 40 % du "
+    lignes = ["Un client en anomalie n'est compté qu'une fois, quel que soit le nombre de "
+              "règles déclenchées : ce compte est inférieur au total des anomalies.",
+              "Le taux agrégé dilue les écarts : une règle défaillante sur 40 % du "
               "portefeuille est compensée par les règles sans anomalie."]
     for typ, q in (("particuliers", qpp), ("entreprises", qpm)):
         for doublon in q.get("doublons_regles", []):
@@ -420,7 +435,7 @@ def _segments_carto(prs, R):
 
     ppe = spp.get("Clients PPE")
     cartes = [
-        (fr(ppe["n"]) if ppe else "n. d.", "Clients PPE (PPE = O)",
+        (fr(ppe["n"]) if ppe else "n. d.", "Clients PPE",
          f"{ppe['part']} % du portefeuille particuliers" if ppe else "champ absent des exports",
          NAVY),
         (fr(spp["Comptes en devise étrangère"]["n"] + spm["Comptes en devise étrangère"]["n"]),
@@ -428,11 +443,12 @@ def _segments_carto(prs, R):
          f"{fr(spp['Comptes en devise étrangère']['n'])} PP · "
          f"{fr(spm['Comptes en devise étrangère']['n'])} PM", AMBER),
         (fr(spp["Clients non-résidents"]["n"] + spm["Clients non-résidents"]["n"]),
-         "Clients non-résidents (RESID = N)",
+         "Clients non-résidents",
          f"{fr(spp['Clients non-résidents']['n'])} PP · "
          f"{fr(spm['Clients non-résidents']['n'])} PM", AMBER),
         (fr(spp["Périmètre sensible consolidé"]["n"] + spm["Périmètre sensible consolidé"]["n"]),
-         "Périmètre sensible consolidé", "union des segments, sans double compte", RED),
+         "Périmètre sensible consolidé", "union des segments, sans double compte",
+         RED),
     ]
     for i, (val, lib, nt, col) in enumerate(cartes):
         kpi(s, 0.4 + i * 2.32, 1.22, 2.24, KPI_H, val, lib, nt, col, vsize=20)
@@ -483,8 +499,9 @@ def _segments_completude(prs, R):
     spp, spm = R["segments"]["pp"], R["segments"]["pm"]
     cpp, cpm = R["completude"]["pp"], R["completude"]["pm"]
 
-    rows = [["Segment", "Eff. PP", "Complétude PP", "Écart PP",
-             "Eff. PM", "Complétude PM", "Écart PM"]]
+    rows = [["Segment", "Eff. PP", "Complétude PP",
+             "Écart PP / portefeuille global", "Eff. PM", "Complétude PM",
+             "Écart PM / portefeuille global"]]
     fills = {}
     rows.append(["Portefeuille global", fr(cpp["n"]), f"{cpp['taux_global']} %", "référence",
                  fr(cpm["n"]), f"{cpm['taux_global']} %", "référence"])
@@ -503,8 +520,8 @@ def _segments_completude(prs, R):
             fills[(len(rows) - 1, 3)] = RED_PALE
         if tb is not None and tb < cpm["taux_global"]:
             fills[(len(rows) - 1, 6)] = RED_PALE
-    table(s, LEFT, 1.24, 9.2, rows, col_w=[24, 12, 15, 12, 12, 15, 10],
-          font_size=7.5, row_h=0.27, head_h=0.30, fills=fills)
+    table(s, LEFT, 1.24, 9.2, rows, col_w=[22, 11, 14, 17, 11, 14, 17],
+          font_size=7.5, row_h=0.27, head_h=0.44, fills=fills)
 
     def graphe(x, typo, cle, champs_cle, titre):
         c = R["completude"][cle]
@@ -537,8 +554,9 @@ def _segments_qualite(prs, R):
     spp, spm = R["segments"]["pp"], R["segments"]["pm"]
     qpp, qpm = R["qualite"]["pp"], R["qualite"]["pm"]
 
-    rows = [["Segment", "Eff. PP", "Qualité PP", "Écart PP",
-             "Eff. PM", "Qualité PM", "Écart PM"]]
+    rows = [["Segment", "Eff. PP", "Qualité PP",
+             "Écart PP / portefeuille global", "Eff. PM", "Qualité PM",
+             "Écart PM / portefeuille global"]]
     fills = {}
     rows.append(["Portefeuille global", fr(qpp["regles"][0]["total"]) if qpp["regles"] else "—",
                  f"{qpp['taux_qualite']} %", "référence",
@@ -559,8 +577,8 @@ def _segments_qualite(prs, R):
             fills[(len(rows) - 1, 3)] = RED_PALE
         if tb is not None and tb < qpm["taux_qualite"]:
             fills[(len(rows) - 1, 6)] = RED_PALE
-    table(s, LEFT, 1.24, 9.2, rows, col_w=[24, 12, 15, 12, 12, 15, 10],
-          font_size=7.5, row_h=0.27, head_h=0.30, fills=fills)
+    table(s, LEFT, 1.24, 9.2, rows, col_w=[22, 11, 14, 17, 11, 14, 17],
+          font_size=7.5, row_h=0.27, head_h=0.44, fills=fills)
 
     def mini(x, titre, seg):
         txt(s, x, 2.86, 2.95, 0.22, titre, size=8.5, bold=True, color=NAVY)
@@ -649,23 +667,26 @@ def _risque(prs, R):
 
 
 def _daterev(prs, R):
-    s = page(prs, BANDEAU["V"], "État des échéances de révision (champ DATREV)", PIED_DE_PAGE)
+    s = page(prs, BANDEAU["V"], "État des échéances de revue scoring (champ DATREV)", PIED_DE_PAGE)
     a, b = R["scoring"]["pp"], R["scoring"]["pm"]
 
     for i, (val, lib, nt, col) in enumerate([
-        (f"{a['part_sans_revision']} %", "Particuliers sans révision opposable",
+        (f"{a['part_sans_revision']} %",
+         "Particuliers avec date de revue scoring échue ou absente",
          f"{fr(a['sans_revision'])} clients : échue, absente ou invalide", RED),
-        (f"{b['part_sans_revision']} %", "Entreprises sans révision opposable",
+        (f"{b['part_sans_revision']} %",
+         "Entreprises avec date de revue scoring échue ou absente",
          f"{fr(b['sans_revision'])} sociétés", RED),
-        (fr(a["statuts"].get("Échue", 0)), "Révisions particuliers échues",
+        (fr(a["statuts"].get("Échue", 0)), "Revues scoring particuliers échues",
          f"{pc(a['statuts'].get('Échue', 0), a['n'])} % du portefeuille", RED),
-        (fr(b["statuts"].get("Non renseignée", 0)), "DATREV entreprises absentes",
+        (fr(b["statuts"].get("Non renseignée", 0)),
+         "Date de revue scoring entreprises absente",
          f"{pc(b['statuts'].get('Non renseignée', 0), b['n'])} % du portefeuille", RED),
     ]):
         kpi(s, 0.4 + i * 2.32, 1.22, 2.24, KPI_H, val, lib, nt, col, vsize=18)
 
     presents = [st for st in STATUTS if a["statuts"].get(st) or b["statuts"].get(st)]
-    txt(s, LEFT, 2.18, 5.6, 0.22, "Répartition des échéances de révision", size=9,
+    txt(s, LEFT, 2.18, 5.6, 0.22, "Répartition des échéances de revue scoring", size=9,
         bold=True, color=NAVY)
     barres(s, LEFT, 2.40, 5.6, 1.88, [p.replace("À échoir ", "") for p in presents],
            [("Particuliers", [a["statuts"].get(p, 0) for p in presents]),
@@ -677,19 +698,21 @@ def _daterev(prs, R):
     fills = {}
     for st in presents:
         x, y = a["statuts"].get(st, 0), b["statuts"].get(st, 0)
-        rows.append([st, fr(x), f"{pc(x, a['n'])} %", fr(y), f"{pc(y, b['n'])} %"])
+        libelle = "Non renseignée *" if st == "Non renseignée" else st
+        rows.append([libelle, fr(x), f"{pc(x, a['n'])} %", fr(y), f"{pc(y, b['n'])} %"])
         if st in ("Échue", "Non renseignée", "Format invalide"):
             fills[(len(rows) - 1, 0)] = RED_PALE
     table(s, 6.20, 2.40, 3.4, rows, col_w=[34, 17, 16, 17, 16], font_size=6.5,
           row_h=0.245, head_h=0.26, fills=fills)
 
     anc = ["< 6 mois", "6 à 12 mois", "1 à 2 ans", "> 2 ans"]
-    txt(s, LEFT, 4.44, 5.6, 0.22, "Ancienneté des révisions échues", size=9,
+    txt(s, LEFT, 4.44, 5.6, 0.22, "Ancienneté des revues scoring échues", size=9,
         bold=True, color=NAVY)
     rows = [["Retard"] + anc, ["Particuliers"] + [fr(a["anciennete_echues"].get(k, 0)) for k in anc],
             ["Entreprises"] + [fr(b["anciennete_echues"].get(k, 0)) for k in anc]]
     table(s, LEFT, 4.66, 5.6, rows, col_w=[28, 18, 18, 18, 18],
           font_size=7, row_h=0.24, head_h=0.26)
+    note(s, 5.44, "* « Non renseignée » inclut des clients dont le scoring est en cours.")
 
 
 def _zone_critique(prs, R):
@@ -699,8 +722,9 @@ def _zone_critique(prs, R):
 
     def bloc_crois(y, titre, sc):
         txt(s, LEFT, y, 9.2, 0.22, titre, size=9, bold=True, color=NAVY)
-        rows = [["Niveau de risque", "Effectif", "Échue", "Non renseignée",
-                 "Sans révision opposable", "% du niveau"]]
+        rows = [["Niveau de risque", "Effectif", "Clients avec date de revue échue",
+                 "Clients avec date de revue non renseignée",
+                 "Total (date de revue scoring échue ou absente)", "% du niveau"]]
         fills = {}
         for niv in NIVEAUX:
             d = sc["croise"].get(niv)
@@ -715,18 +739,19 @@ def _zone_critique(prs, R):
                 fills[(len(rows) - 1, 5)] = RED_PALE
             elif pc(ko, tot) >= 30:
                 fills[(len(rows) - 1, 5)] = AMBER_PALE
-        table(s, LEFT, y + 0.22, 9.2, rows, col_w=[24, 15, 14, 16, 18, 13],
-              font_size=7, row_h=0.21, head_h=0.25, fills=fills)
-        return y + 0.22 + 0.25 + 0.21 * (len(rows) - 1)
+        table(s, LEFT, y + 0.22, 9.2, rows, col_w=[20, 12, 17, 19, 21, 11],
+              font_size=7, row_h=0.21, head_h=0.46, fills=fills)
+        return y + 0.22 + 0.46 + 0.21 * (len(rows) - 1)
 
-    y = bloc_crois(1.24, "Particuliers — état de la révision par niveau de risque", a)
-    y = bloc_crois(y + 0.14, "Entreprises — état de la révision par niveau de risque", b)
+    y = bloc_crois(1.24, "Particuliers — état de la revue scoring par niveau de risque", a)
+    y = bloc_crois(y + 0.14,
+                   "Entreprises — état de la revue scoring par niveau de risque", b)
 
     ra, rb = a["risque_eleve"], b["risque_eleve"]
     lignes = [
         f"Particuliers : {fr(ra['sans_revision'])} clients à risque élevé sur {fr(ra['total'])} "
-        f"({ra['part']} %) sont sans révision opposable — {fr(ra['echue'])} échues, "
-        f"{fr(ra['non_renseignee'])} absentes.",
+        f"({ra['part']} %) ont une date de revue scoring échue ou absente — "
+        f"{fr(ra['echue'])} échues, {fr(ra['non_renseignee'])} absentes.",
         f"Entreprises : {fr(rb['sans_revision'])} sociétés sur {fr(rb['total'])} ({rb['part']} %) "
         f"— {fr(rb['echue'])} échues, {fr(rb['non_renseignee'])} absentes.",
         f"Périmètre prioritaire de régularisation : "
@@ -734,7 +759,8 @@ def _zone_critique(prs, R):
     ]
     ye = y + 0.14
     encart(s, LEFT, ye, 9.2, max(0.62, 5.28 - ye),
-           "Zone critique — risque élevé sans révision opposable", lignes,
+           "Zone critique — risque élevé avec date de revue scoring échue ou absente",
+           lignes,
            ton="red", size=7)
 
 
@@ -751,9 +777,11 @@ def _profil_risque_eleve(prs, R):
          f"{a['part']} % du portefeuille particuliers", RED),
         (fr(b["n"]), "Entreprises à risque élevé",
          f"{b['part']} % du portefeuille entreprises", RED),
-        (f"{scpp['risque_eleve']['part']} %", "Sans révision opposable (PP)",
+        (f"{scpp['risque_eleve']['part']} %",
+         "Date de revue scoring échue ou absente (PP)",
          f"{fr(scpp['risque_eleve']['sans_revision'])} clients concernés", RED),
-        (f"{scpm['risque_eleve']['part']} %", "Sans révision opposable (PM)",
+        (f"{scpm['risque_eleve']['part']} %",
+         "Date de revue scoring échue ou absente (PM)",
          f"{fr(scpm['risque_eleve']['sans_revision'])} sociétés concernées", RED),
     ]):
         kpi(s, 0.4 + i * 2.32, 1.22, 2.24, KPI_H, val, lib, nt, col, vsize=20)
@@ -770,14 +798,14 @@ def _profil_risque_eleve(prs, R):
         ("Taux de complétude", cpp["taux_global"],
          a["completude"]["taux_global"] if a["n"] else None,
          cpm["taux_global"], b["completude"]["taux_global"] if b["n"] else None),
-        ("Dossiers intégralement complets", cpp["part_clients_complets"],
+        ("Clients intégralement renseignés", cpp["part_clients_complets"],
          a["completude"]["part_clients_complets"] if a["n"] else None,
          cpm["part_clients_complets"],
          b["completude"]["part_clients_complets"] if b["n"] else None),
         ("Taux de qualité", qpp["taux_qualite"],
          a["qualite"]["taux_qualite"] if a["n"] else None,
          qpm["taux_qualite"], b["qualite"]["taux_qualite"] if b["n"] else None),
-        ("Sans révision opposable", scpp["part_sans_revision"],
+        ("Date de revue scoring échue ou absente", scpp["part_sans_revision"],
          a["scoring"]["part_sans_revision"] if a["n"] else None,
          scpm["part_sans_revision"],
          b["scoring"]["part_sans_revision"] if b["n"] else None),
@@ -785,13 +813,13 @@ def _profil_risque_eleve(prs, R):
     for lib, gp, rp, gm, rm in lignes_cmp:
         rows.append([lib, f"{gp} %", f"{rp} %" if rp is not None else "—",
                      f"{gm} %", f"{rm} %" if rm is not None else "—"])
-        pire = "Sans révision" in lib
+        pire = "revue scoring" in lib
         if rp is not None and ((rp > gp) if pire else (rp < gp)):
             fills[(len(rows) - 1, 2)] = RED_PALE
         if rm is not None and ((rm > gm) if pire else (rm < gm)):
             fills[(len(rows) - 1, 4)] = RED_PALE
-    table(s, LEFT, y, 4.5, rows, col_w=[34, 17, 17, 16, 16], font_size=7,
-          row_h=0.28, head_h=0.36, fills=fills)
+    table(s, LEFT, y, 4.5, rows, col_w=[36, 16, 16, 16, 16], font_size=7,
+          row_h=0.30, head_h=0.36, fills=fills)
 
     txt(s, 5.1, y - 0.02, 4.5, 0.22, "Anomalies les plus fréquentes sur ce niveau",
         size=9, bold=True, color=NAVY)
@@ -830,21 +858,20 @@ def _plan(R):
 
     ko = spp["risque_eleve"]["sans_revision"] + spm["risque_eleve"]["sans_revision"]
     if ko:
-        plan.append(("Clients à risque élevé sans révision KYC opposable",
+        plan.append(("Clients à risque élevé sans date de revue scoring AML",
                      f"{fr(ko)} clients (PP + PM)",
-                     "Campagne de révision ciblée pilotée par le module Rappels Scoring",
-                     "Critique"))
+                     "Campagne de révision périodique", "Critique"))
     ech = spp["statuts"].get("Échue", 0) + spm["statuts"].get("Échue", 0)
     if ech:
-        plan.append(("Révisions KYC échues sur l'ensemble du portefeuille",
+        plan.append(("Revues scoring échues sur l'ensemble du portefeuille",
                      f"{fr(ech)} clients",
-                     "Plan de rattrapage par agence, en priorité les retards de plus de 12 mois",
-                     "Élevée"))
+                     "Plan de rattrapage avec priorisation des clients à risque élevé "
+                     "et des retards de plus de 12 mois", "Élevée"))
     nr = spm["statuts"].get("Non renseignée", 0)
     if pc(nr, spm["n"]) >= 20:
-        plan.append(("Date de révision absente côté entreprises",
+        plan.append(("Date de revue scoring absente pour les entreprises",
                      f"{fr(nr)} sociétés ({pc(nr, spm['n'])} %)",
-                     "Initialiser DATREV à partir de la date d'entrée en relation",
+                     "Initialisation automatique de la date de revue lors du scoring AML",
                      "Élevée"))
 
     for typo, c, cle in (("PP", cpp, "pp"), ("PM", cpm, "pm")):
@@ -854,7 +881,7 @@ def _plan(R):
             plan.append((f"Champ « {label(f, typo)} » peu alimenté "
                          f"({'particuliers' if typo == 'PP' else 'entreprises'})",
                          f"{fr(c['vides_par_champ'][f])} dossiers vides ({v} %)",
-                         "Collecte au renouvellement et contrôle bloquant à la saisie",
+                         "Campagne de fiabilisation des données KYC",
                          "Élevée" if v < 60 else "Moyenne"))
 
     for typo, v, cle in (("PP", vpp, "pp"), ("PM", vpm, "pm")):
@@ -864,7 +891,7 @@ def _plan(R):
                              f"({'particuliers' if typo == 'PP' else 'entreprises'})",
                              f"{fr(info['non_communiquee'])} dossiers "
                              f"({info['part_non_communiquee']} %)",
-                             "Retirer la valeur par défaut du référentiel et la traiter "
+                             "Retirer la valeur par défaut du référentiel ou la traiter "
                              "comme une non-réponse", "Élevée"))
 
     for typo, q in (("particuliers", qpp), ("entreprises", qpm)):
@@ -872,7 +899,7 @@ def _plan(R):
             if r["part"] >= 20:
                 plan.append((f"Règle « {r['nom']} » ({typo})",
                              f"{fr(r['anomalies'])} anomalies ({r['part']} %)",
-                             "Chantier de correction dédié, piloté par agence", "Élevée"))
+                             "Campagne de fiabilisation des données KYC", "Élevée"))
         for doublon in q.get("doublons_regles", []):
             plan.append(("Règles au libellé différent mais aux conditions identiques",
                          " / ".join(doublon),
@@ -961,7 +988,7 @@ def construire(R, sortie):
     _zone_critique(prs, R)
     _profil_risque_eleve(prs, R)
     _plan_slides(prs, R)
-    cloture(prs, "MERCI",
+    cloture(prs, "FIN DU DOCUMENT",
             f"Audit KYC {R['filiale']['libelle']} — {PIED_DE_PAGE}", _date_fr(d))
 
     prs.save(sortie)

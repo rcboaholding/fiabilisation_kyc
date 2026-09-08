@@ -30,11 +30,12 @@ def nettoyer(v):
 
 
 def parse_date(v):
-    """Accepte les formats produits par l'export : ISO, JJ/MM/AAAA, JJ-MM-AAAA."""
+    """Accepte les formats de l'export : ISO, JJ/MM/AAAA, JJ-MM-AAAA, JJ/MM/AA."""
     v = (v or "").strip()
     if not v:
         return None
-    for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%Y%m%d"):
+    for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%Y%m%d",
+                "%d/%m/%y", "%d-%m-%y"):
         try:
             return datetime.strptime(v, fmt).date()
         except ValueError:

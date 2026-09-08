@@ -36,27 +36,37 @@ class Command(BaseCommand):
 
                                                                        
         trimestre_par_filiale = {}
+        methode_par_filiale = {}
         for cfg in AppreciationConfig.objects.filter(active=True).exclude(filiale=""):
-            trimestre_par_filiale[cfg.filiale.strip().upper()] = current_trimestre(cfg.date_demarrage)
+            key = cfg.filiale.strip().upper()
+            trimestre_par_filiale[key] = current_trimestre(cfg.date_demarrage)
+            methode_par_filiale[key] = (cfg.methode_taux or "flux").strip().lower()
         if trimestre_par_filiale:
-            apercu = ", ".join(f"{f}=T{t}" for f, t in sorted(trimestre_par_filiale.items()))
-            self.stdout.write(f"Trimestres par filiale : {apercu}")
+            apercu = ", ".join(f"{f}=T{t}/{methode_par_filiale.get(f, 'flux')}"
+                               for f, t in sorted(trimestre_par_filiale.items()))
+            self.stdout.write(f"Config par filiale : {apercu}")
         else:
-            self.stdout.write("Aucune configuration par filiale — trimestre 1 par défaut.")
+            self.stdout.write("Aucune configuration par filiale — trimestre 1 / méthode flux par défaut.")
 
         def trimestre_for(fil):
             return trimestre_par_filiale.get((fil or "").strip().upper(), 1)
 
+        def methode_for(fil):
+            return methode_par_filiale.get((fil or "").strip().upper(), "flux")
+
+        from kyc.views import flux_datouv_window
+        flux_start, flux_end = flux_datouv_window()
+
         filiale_filter = options.get("filiale")
 
                                                                                         
-        evo_qs = TauxEvolution.objects.filter(flux_stock="F").exclude(expl="")
+        evo_qs = TauxEvolution.objects.filter(flux_stock__in=("F", "S")).exclude(expl="")
         if filiale_filter:
             evo_qs = evo_qs.filter(filiale=filiale_filter)
         agents = set(evo_qs.values_list("filiale", "expl").distinct())
 
         if not agents:
-            self.stdout.write(self.style.WARNING("Aucun agent (TauxEvolution flux) trouvé."))
+            self.stdout.write(self.style.WARNING("Aucun agent (TauxEvolution) trouvé."))
             return
 
                                                                                  
@@ -75,24 +85,32 @@ class Command(BaseCommand):
             return
 
                                                                          
-        def taux_evolution_agent(fil, expl):
+        def taux_evolution_agent(fil, expl, methode):
+            code = "S" if methode == "stock" else "F"
             vals = []
             for pp in ("P", "M"):
                 rec = (TauxEvolution.objects
-                       .filter(filiale=fil, expl=expl, flux_stock="F", pp_pm=pp)
+                       .filter(filiale=fil, expl=expl, flux_stock=code, pp_pm=pp)
                        .order_by("-date").first())
                 if rec and rec.taux is not None:
                     vals.append(rec.taux)
             return round(sum(vals) / len(vals), 1) if vals else None
 
                                                                                
-        notes = Notation.objects.filter(flux_stock="Flux")
-        latest = notes.values("agent").annotate(d=Max("date_notation"))
-        latest_dates = {n["agent"]: n["d"] for n in latest}
-        notation_by_agentid = {}
-        for n in notes.filter(date_notation__in=latest_dates.values()).select_related("agent"):
-            if latest_dates.get(n.agent_id) == n.date_notation:
-                notation_by_agentid[n.agent_id] = n.note
+        def _latest_notation_by_agent(flux_stock):
+            notes = Notation.objects.filter(flux_stock=flux_stock)
+            latest = notes.values("agent").annotate(d=Max("date_notation"))
+            latest_dates = {n["agent"]: n["d"] for n in latest}
+            out = {}
+            for n in notes.filter(date_notation__in=latest_dates.values()).select_related("agent"):
+                if latest_dates.get(n.agent_id) == n.date_notation:
+                    out[n.agent_id] = n.note
+            return out
+
+        notation_by_methode = {
+            "flux": _latest_notation_by_agent("Flux"),
+            "stock": _latest_notation_by_agent("Stock"),
+        }
                                                                     
         profile_idx = {}
         for p in ProfileV.objects.exclude(code_expl="").exclude(code_expl__isnull=True):
@@ -103,10 +121,12 @@ class Command(BaseCommand):
         from kyc.views import evaluate_data_quality_rule
         rules = list(DataQualityRule.objects.filter(active=True))
 
-        def taux_qualite_agent(fil, expl):
+        def taux_qualite_agent(fil, expl, methode):
+            ds, de = (flux_start, flux_end) if methode == "flux" else (None, None)
             ok = tot = 0
             for rule in rules:
-                stat = evaluate_data_quality_rule(rule, filiale=fil, expl=expl)
+                stat = evaluate_data_quality_rule(rule, filiale=fil, expl=expl,
+                                                  datouv_start=ds, datouv_end=de)
                 tot += stat.get("total", 0)
                 ok += stat.get("ok_count", 0)
             if tot == 0:
@@ -128,10 +148,11 @@ class Command(BaseCommand):
         rows = []
         for fil, expl in agents:
             trimestre = trimestre_for(fil)
-            te = taux_evolution_agent(fil, expl)
-            tq = taux_qualite_agent(fil, expl)
+            methode = methode_for(fil)
+            te = taux_evolution_agent(fil, expl, methode)
+            tq = taux_qualite_agent(fil, expl, methode)
             prof = profile_idx.get((fil.strip().upper(), expl.strip().upper()))
-            note = notation_by_agentid.get(prof.id, "") if prof else ""
+            note = notation_by_methode[methode].get(prof.id, "") if prof else ""
 
             appr_q = appreciation_qualite(tq, note)
             appr_g = appreciation_globale(te, appr_q, trimestre)
@@ -140,6 +161,7 @@ class Command(BaseCommand):
             rows.append((fil, expl, {
                 "agent": prof,
                 "trimestre": trimestre,
+                "methode_taux": methode,
                 "taux_evolution": te,
                 "taux_qualite": tq,
                 "notation": note or "",
@@ -148,7 +170,7 @@ class Command(BaseCommand):
                 "mesure": mesure,
             }))
             if options.get("verbose"):
-                self.stdout.write(f"  {fil} / {expl} (T{trimestre}): évo={te} qual={tq} "
+                self.stdout.write(f"  {fil} / {expl} (T{trimestre}, {methode}): évo={te} qual={tq} "
                                   f"note={note or '—'} -> {appr_q} / {appr_g}")
 
                                                                                

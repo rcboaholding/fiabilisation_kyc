@@ -3,6 +3,7 @@
 
     python generate_report.py --filiale SN
     python generate_report.py --filiale CI --dossier D:/exports --json
+    python generate_report.py --filiale CI --dossier-csv D:/exports/csv
 
 Entrées attendues dans le dossier de travail :
     pp_XX_STOCK.csv          export particuliers  (produit par Script_V3.r)
@@ -27,6 +28,13 @@ def main(argv=None):
                    help="Code ISO 2 de la filiale (SN, CI, BJ, ML, BF, ...)")
     p.add_argument("--dossier", "-d", default=".",
                    help="Dossier contenant les exports (défaut : dossier courant)")
+    p.add_argument("--dossier-csv", dest="dossier_csv", default=None,
+                   help="Dossier des exports pp_XX_STOCK.csv / pm_XX_STOCK.csv "
+                        "(défaut : --dossier)")
+    p.add_argument("--pp", default=None,
+                   help="Chemin complet du CSV particuliers (prioritaire sur --dossier-csv)")
+    p.add_argument("--pm", default=None,
+                   help="Chemin complet du CSV entreprises (prioritaire sur --dossier-csv)")
     p.add_argument("--sortie", "-o", default=None,
                    help="Chemin du PPTX (défaut : Audit_KYC_BOA_XX_AAAAMMJJ.pptx)")
     p.add_argument("--regles", default=None,
@@ -45,7 +53,12 @@ def main(argv=None):
     iso = args.filiale.strip().upper()
 
     print(f"=== Audit KYC BOA {iso} — référence {jour.isoformat()} ===")
-    R = pipeline.executer(iso, dossier=args.dossier, regles_path=args.regles, today=jour)
+    dossier_csv = args.dossier_csv or args.dossier
+    pp_path = args.pp or os.path.join(dossier_csv, f"pp_{iso}_STOCK.csv")
+    pm_path = args.pm or os.path.join(dossier_csv, f"pm_{iso}_STOCK.csv")
+
+    R = pipeline.executer(iso, dossier=args.dossier, regles_path=args.regles, today=jour,
+                          pp_path=pp_path, pm_path=pm_path)
 
     sortie = args.sortie or os.path.join(
         args.dossier, f"Audit_KYC_BOA_{iso}_{jour.strftime('%Y%m%d')}.pptx")

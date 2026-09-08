@@ -13,7 +13,7 @@ PM_FIELDS = ["CODAPE", "AGEC", "CAPITAL", "CA", "RESULTAT", "RCSNO",
 PP_LABELS = {
     "PAYNAIS": "Lieu de naissance",
     "PROFESSION": "Profession",
-    "SALAIRE": "Salaire",
+    "SALAIRE": "Revenu",
     "NUMID": "NIN",
     "CODAPE": "Code agent économique",
     "TEL": "Téléphone",

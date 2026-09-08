@@ -4,8 +4,8 @@ Matrice d'appréciation globale — reproduction fidèle du script R
 
 Liaison des modèles :
   - Taux_qualite_agent : taux de conformité des règles qualité par agent (filiale + expl)
-  - Notation           : dernière notation FLUX de l'agent
-  - TauxEvolution      : taux d'évolution FLUX (moyenne PP + PM, dernier point)
+  - Notation           : dernière notation de l'agent (flux ou stock selon AppreciationConfig.methode_taux)
+  - TauxEvolution      : taux d'évolution flux ou stock (moyenne PP + PM, dernier point)
   - trimestre_actuel   : trimestres écoulés depuis la date de démarrage (admin), plafonné 1..4
 
 Notations utilisées (libellés Django, identiques au script R mis à jour) :
@@ -54,16 +54,18 @@ QUARTER_BANDS = {1: (5, 30), 2: (30, 60), 3: (60, 90), 4: (65, 95)}
 
 def appreciation_globale(taux_evolution, appr_qualite, trimestre):
     """Appréciation globale = f(taux d'évolution, appréciation qualité, trimestre)."""
-    te = taux_evolution if taux_evolution is not None else 0.0
     try:
         t = int(trimestre or 1)
     except (TypeError, ValueError):
         t = 1
     low, high = QUARTER_BANDS.get(t, QUARTER_BANDS[1])
 
-    if te <= low:
+    if taux_evolution is None:
+        # Taux d'évolution absent = traité favorablement (comme la notation vide côté qualité).
+        prefix = "Bon"
+    elif taux_evolution <= low:
         prefix = "Faible"
-    elif te <= high:
+    elif taux_evolution <= high:
         prefix = "Moyen"
     else:
         prefix = "Bon"

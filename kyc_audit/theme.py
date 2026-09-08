@@ -288,14 +288,14 @@ def note(slide, y, texte, size=7.5):
     txt(slide, LEFT, y, 9.2, 0.28, texte, size=size, color=MUTED, italic=True)
 
 
-def _axes(ch, size, maxval=None):
+def _axes(ch, size, maxval=None, minval=None):
     va = ch.value_axis
     va.has_major_gridlines = True
     va.major_gridlines.format.line.color.rgb = DIVIDER
     va.major_gridlines.format.line.width = Pt(0.5)
     va.tick_labels.font.size = Pt(size)
     va.tick_labels.font.name = FONT
-    va.minimum_scale = 0
+    va.minimum_scale = minval if minval is not None else 0
     if maxval:
         va.maximum_scale = maxval
     ca = ch.category_axis
@@ -305,8 +305,8 @@ def _axes(ch, size, maxval=None):
 
 
 def barres(slide, x, y, w, h, categories, series, couleurs=None, horizontal=False,
-           maxval=None, size=7.5, num_fmt='0"%"', legende=False, gap=50,
-           labels=True):
+           maxval=None, minval=None, size=7.5, num_fmt='0"%"', legende=False,
+           gap=50, labels=True):
     """series : [(nom, [valeurs]), ...] ; couleurs : [RGBColor] ou [[RGBColor par point]]."""
     cd = CategoryChartData()
     cd.categories = categories
@@ -346,7 +346,7 @@ def barres(slide, x, y, w, h, categories, series, couleurs=None, horizontal=Fals
                 for pi, pt_ in enumerate(ser.points):
                     pt_.format.fill.solid()
                     pt_.format.fill.fore_color.rgb = couleurs[si][pi]
-    _axes(ch, size, maxval)
+    _axes(ch, size, maxval, minval)
     return ch
 
 
